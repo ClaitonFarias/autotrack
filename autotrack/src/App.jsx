@@ -1350,10 +1350,10 @@ export default function App() {
     setSyncStatus(null);
   };
 
-  // Primeiro acesso
+  // Primeiro acesso - abre modal quando tiver usuário e sem veículos
   useEffect(() => {
-    if (vehicles.length === 0 && gsUser) setSetupModal(true);
-  }, [gsUser]);
+    if (vehicles.length === 0) setSetupModal(true);
+  }, [vehicles.length]);
 
   const finishSetup = () => {
     if (!setupForm.name) return;
