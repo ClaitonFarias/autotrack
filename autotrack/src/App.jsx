@@ -1019,7 +1019,7 @@ const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId }) => {
 };
 
 // ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
-const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId }) => {
+const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, exportData, importData }) => {
   const [modalVehicle, setModalVehicle] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
   const [form, setForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "11", initialBalance: "" });
@@ -1085,6 +1085,20 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
             </div>
           </div>
         ))}
+
+        <div className="section-title" style={{ marginTop: 24 }}>Backup</div>
+        <div className="card">
+          <div style={{ fontSize: 13, color: theme.textSecondary, marginBottom: 14, lineHeight: 1.5 }}>
+            Salve um backup de todos os seus dados. O arquivo fica no iCloud Drive e pode ser restaurado a qualquer momento.
+          </div>
+          <button className="btn btn-primary" onClick={exportData}>⬇️ Exportar backup</button>
+          <div style={{ marginTop: 10 }}>
+            <label style={{ display: "block", width: "100%", padding: "14px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.card, color: theme.textSecondary, fontSize: 15, fontWeight: 600, textAlign: "center", cursor: "pointer" }}>
+              ⬆️ Importar backup
+              <input type="file" accept=".json" onChange={importData} style={{ display: "none" }}/>
+            </label>
+          </div>
+        </div>
       </div>
 
       {modalVehicle && (
@@ -1134,122 +1148,24 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
   );
 };
 
-// ─── FIREBASE ────────────────────────────────────────────────────────────────
-import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDoIr2XHB58SAHjqolDD-_mk9fiW1l1lqU",
-  authDomain: "autotrack-30337.firebaseapp.com",
-  projectId: "autotrack-30337",
-  storageBucket: "autotrack-30337.firebasestorage.app",
-  messagingSenderId: "1003856088058",
-  appId: "1:1003856088058:web:14ae40948715a16d277243"
-};
-
-const fbApp = initializeApp(firebaseConfig);
-const auth = getAuth(fbApp);
-const db = getFirestore(fbApp);
-const provider = new GoogleAuthProvider();
-
-const fbSave = async (uid, key, data) => {
-  await setDoc(doc(db, "users", uid, "data", key), { value: JSON.stringify(data) }, { merge: true });
-};
-
-const fbLoad = async (uid, key) => {
-  const snap = await getDoc(doc(db, "users", uid, "data", key));
-  if (snap.exists()) { try { return JSON.parse(snap.data().value); } catch { return null; } }
-  return null;
-};
-
 // ─── APP ROOT ────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("dashboard");
-  const [vehicles, setVehiclesRaw] = useStorage("vehicles", []);
+  const [vehicles, setVehicles] = useStorage("vehicles", []);
   const [currentVehicleId, setCurrentVehicleId] = useStorage("currentVehicleId", null);
-  const [trips, setTripsRaw] = useStorage("trips", []);
-  const [fuels, setFuelsRaw] = useStorage("fuels", []);
-  const [maintenances, setMaintenancesRaw] = useStorage("maintenances", []);
-  const [alerts, setAlertsRaw] = useStorage("alerts", []);
-  const [expenses, setExpensesRaw] = useStorage("expenses", []);
-  const [monthBalances, setMonthBalancesRaw] = useStorage("monthBalances", {});
+  const [trips, setTrips] = useStorage("trips", []);
+  const [fuels, setFuels] = useStorage("fuels", []);
+  const [maintenances, setMaintenances] = useStorage("maintenances", []);
+  const [alerts, setAlerts] = useStorage("alerts", []);
+  const [expenses, setExpenses] = useStorage("expenses", []);
+  const [monthBalances, setMonthBalances] = useStorage("monthBalances", {});
   const [setupModal, setSetupModal] = useState(false);
   const [setupForm, setSetupForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "" });
 
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState(null);
-
-  // Observar estado de autenticação e resultado do redirect
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      setAuthLoading(false);
-      if (u) {
-        setSyncing(true);
-        try {
-          const [v, t, f, m, a, e, mb] = await Promise.all([
-            fbLoad(u.uid, "vehicles"),
-            fbLoad(u.uid, "trips"),
-            fbLoad(u.uid, "fuels"),
-            fbLoad(u.uid, "maintenances"),
-            fbLoad(u.uid, "alerts"),
-            fbLoad(u.uid, "expenses"),
-            fbLoad(u.uid, "monthBalances"),
-          ]);
-          if (v && v.length > 0) { setVehiclesRaw(v); setCurrentVehicleId(v[0].id); }
-          if (t) setTripsRaw(t);
-          if (f) setFuelsRaw(f);
-          if (m) setMaintenancesRaw(m);
-          if (a) setAlertsRaw(a);
-          if (e) setExpensesRaw(e);
-          if (mb) setMonthBalancesRaw(mb);
-          setSyncStatus("ok");
-        } catch { setSyncStatus("error"); }
-        finally { setSyncing(false); }
-      }
-    });
-    return unsub;
-  }, []);
-
   // Primeiro acesso
   useEffect(() => {
-    if (!authLoading && vehicles.length === 0) setSetupModal(true);
-  }, [authLoading, vehicles.length]);
-
-  // Sync debounced
-  const syncTimer = useCallback((() => { let t = null; return (fn) => { clearTimeout(t); t = setTimeout(fn, 1500); }; })(), []);
-
-  const sync = useCallback((key, val) => {
-    if (!user) return;
-    syncTimer(async () => {
-      setSyncing(true);
-      try { await fbSave(user.uid, key, val); setSyncStatus("ok"); }
-      catch { setSyncStatus("error"); }
-      finally { setSyncing(false); }
-    });
-  }, [user, syncTimer]);
-
-  const setVehicles = (v) => { const val = typeof v === "function" ? v(vehicles) : v; setVehiclesRaw(val); sync("vehicles", val); };
-  const setTrips = (v) => { const val = typeof v === "function" ? v(trips) : v; setTripsRaw(val); sync("trips", val); };
-  const setFuels = (v) => { const val = typeof v === "function" ? v(fuels) : v; setFuelsRaw(val); sync("fuels", val); };
-  const setMaintenances = (v) => { const val = typeof v === "function" ? v(maintenances) : v; setMaintenancesRaw(val); sync("maintenances", val); };
-  const setAlerts = (v) => { const val = typeof v === "function" ? v(alerts) : v; setAlertsRaw(val); sync("alerts", val); };
-  const setExpenses = (v) => { const val = typeof v === "function" ? v(expenses) : v; setExpensesRaw(val); sync("expenses", val); };
-  const setMonthBalances = (v) => { const val = typeof v === "function" ? v(monthBalances) : v; setMonthBalancesRaw(val); sync("monthBalances", val); };
-
-  const handleLogin = async () => {
-    try { await signInWithRedirect(auth, provider); }
-    catch (e) { console.error(e); }
-  };
-
-  const handleLogout = async () => {
-    await signOut(auth);
-    setUser(null);
-    setSyncStatus(null);
-  };
+    if (vehicles.length === 0) setSetupModal(true);
+  }, [vehicles.length]);
 
   const finishSetup = () => {
     if (!setupForm.name) return;
@@ -1257,6 +1173,41 @@ export default function App() {
     setVehicles([v]);
     setCurrentVehicleId(v.id);
     setSetupModal(false);
+  };
+
+  // Exportar dados
+  const exportData = () => {
+    const data = { vehicles, currentVehicleId, trips, fuels, maintenances, alerts, expenses, monthBalances, exportedAt: new Date().toISOString() };
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `autotrack-backup-${fmt.today()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Importar dados
+  const importData = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.vehicles) setVehicles(data.vehicles);
+        if (data.currentVehicleId) setCurrentVehicleId(data.currentVehicleId);
+        if (data.trips) setTrips(data.trips);
+        if (data.fuels) setFuels(data.fuels);
+        if (data.maintenances) setMaintenances(data.maintenances);
+        if (data.alerts) setAlerts(data.alerts);
+        if (data.expenses) setExpenses(data.expenses);
+        if (data.monthBalances) setMonthBalances(data.monthBalances);
+        alert("Dados importados com sucesso!");
+      } catch { alert("Erro ao importar arquivo."); }
+    };
+    reader.readAsText(file);
   };
 
   const navItems = [
@@ -1267,44 +1218,12 @@ export default function App() {
     { key: "settings", icon: "settings", label: "Config" },
   ];
 
-  const props = { vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, trips, setTrips, fuels, setFuels, maintenances, setMaintenances, alerts, setAlerts, expenses, setExpenses, setTab, monthBalances, setMonthBalances };
-  const syncIndicator = syncing ? "⏳" : syncStatus === "ok" ? "☁️" : syncStatus === "error" ? "⚠️" : null;
-
-  if (authLoading) return (
-    <>
-      <style>{css}</style>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: theme.bg }}>
-        <div style={{ color: theme.textSecondary, fontSize: 14 }}>Carregando...</div>
-      </div>
-    </>
-  );
+  const props = { vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, trips, setTrips, fuels, setFuels, maintenances, setMaintenances, alerts, setAlerts, expenses, setExpenses, setTab, monthBalances, setMonthBalances, exportData, importData };
 
   return (
     <>
       <style>{css}</style>
       <div className="app">
-        {/* Barra de autenticação */}
-        {!user ? (
-          <div style={{ background: theme.surface, borderBottom: `1px solid ${theme.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 12, color: theme.textSecondary }}>Conecte para salvar na nuvem</div>
-            <button onClick={handleLogin}
-              style={{ background: theme.accent, color: "#fff", border: "none", borderRadius: 10, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              Entrar com Google
-            </button>
-          </div>
-        ) : (
-          <div style={{ background: theme.surface, borderBottom: `1px solid ${theme.border}`, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {user.photoURL && <img src={user.photoURL} style={{ width: 24, height: 24, borderRadius: "50%" }} alt=""/>}
-              <div style={{ fontSize: 12, color: theme.textSecondary }}>{user.displayName}</div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {syncIndicator && <span style={{ fontSize: 14 }}>{syncIndicator}</span>}
-              <span style={{ fontSize: 11, color: theme.textMuted, cursor: "pointer" }} onClick={handleLogout}>Sair</span>
-            </div>
-          </div>
-        )}
-
         {tab === "dashboard" && <Dashboard {...props}/>}
         {tab === "trips" && <Trips {...props}/>}
         {tab === "fuels" && <Fuels {...props}/>}
@@ -1320,7 +1239,6 @@ export default function App() {
           ))}
         </nav>
 
-        {/* Setup inicial */}
         {setupModal && (
           <div className="modal-overlay">
             <div className="modal">
@@ -1330,21 +1248,6 @@ export default function App() {
               <p style={{ fontSize: 14, color: theme.textSecondary, textAlign: "center", marginBottom: 20, lineHeight: 1.6 }}>
                 Vamos começar cadastrando seu veículo.
               </p>
-              {!user && (
-                <div style={{ marginBottom: 16 }}>
-                  <button onClick={handleLogin}
-                    style={{ width: "100%", background: "#fff", color: "#333", border: `1px solid ${theme.border}`, borderRadius: 14, padding: "12px", fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                    🔑 Entrar com Google primeiro
-                  </button>
-                  <div style={{ textAlign: "center", fontSize: 11, color: theme.textMuted, margin: "10px 0" }}>ou cadastre sem conta</div>
-                </div>
-              )}
-              {user && (
-                <div style={{ background: theme.accentSoft, border: `1px solid ${theme.accent}`, borderRadius: 12, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-                  {user.photoURL && <img src={user.photoURL} style={{ width: 24, height: 24, borderRadius: "50%" }} alt=""/>}
-                  <div style={{ fontSize: 13, color: theme.accent, fontWeight: 500 }}>✓ Conectado como {user.displayName}</div>
-                </div>
-              )}
               <div className="form-group">
                 <label className="form-label">Nome / Apelido</label>
                 <input className="form-input" placeholder="Ex: Meu Carro" value={setupForm.name} onChange={e => setSetupForm(p => ({ ...p, name: e.target.value }))}/>
