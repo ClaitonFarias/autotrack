@@ -797,10 +797,20 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
     setFormM({ date: fmt.today(), km: "", type: "", value: "", notes: "" });
   };
 
+  const [editingAlertId, setEditingAlertId] = useState(null);
+
+  const openNewA = () => { setEditingAlertId(null); setFormA({ name: "", interval: "", warnBefore: "", lastKm: "" }); setModalAlert(true); };
+  const openEditA = (a) => { setEditingAlertId(a.id); setFormA({ name: a.name, interval: String(a.interval), warnBefore: String(a.warnBefore || ""), lastKm: String(a.lastKm || "") }); setModalAlert(true); };
+
   const saveA = () => {
     if (!formA.name || !formA.interval) return;
-    setAlerts(prev => [...prev, { ...formA, id: uid(), vehicleId: currentVehicleId, interval: +formA.interval, warnBefore: +formA.warnBefore || 1000, lastKm: +formA.lastKm || currentKm }]);
+    if (editingAlertId) {
+      setAlerts(prev => prev.map(a => a.id === editingAlertId ? { ...a, ...formA, interval: +formA.interval, warnBefore: +formA.warnBefore || 1000, lastKm: +formA.lastKm || currentKm } : a));
+    } else {
+      setAlerts(prev => [...prev, { ...formA, id: uid(), vehicleId: currentVehicleId, interval: +formA.interval, warnBefore: +formA.warnBefore || 1000, lastKm: +formA.lastKm || currentKm }]);
+    }
     setModalAlert(false);
+    setEditingAlertId(null);
     setFormA({ name: "", interval: "", warnBefore: "", lastKm: "" });
   };
 
@@ -865,6 +875,9 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>{a.name}</div>
                     <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => openEditA(a)} style={{ background: "none", border: "none", cursor: "pointer", color: theme.accent, fontSize: 12, fontWeight: 600 }}>
+                        ✏️
+                      </button>
                       {(status === "warn" || status === "danger") && (
                         <button onClick={() => markDone(a)} style={{ background: "none", border: "none", cursor: "pointer", color: theme.success, fontSize: 12, fontWeight: 600 }}>
                           ✓ Feito
@@ -884,7 +897,7 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
                 </div>
               );
             })}
-            <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={() => setModalAlert(true)}>+ Novo alerta</button>
+            <button className="btn btn-ghost" style={{ marginTop: 8 }} onClick={openNewA}>+ Novo alerta</button>
           </>
         )}
       </div>
@@ -930,7 +943,7 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setModalAlert(false)}>
           <div className="modal">
             <div className="modal-handle"/>
-            <div className="modal-title">Novo alerta</div>
+            <div className="modal-title">{editingAlertId ? "Editar alerta" : "Novo alerta"}</div>
             <div className="form-group">
               <label className="form-label">Nome</label>
               <input className="form-input" placeholder="Ex: Troca de óleo, Óleo da caixa..." value={formA.name} onChange={e => setFormA(p => ({ ...p, name: e.target.value }))}/>
@@ -949,7 +962,7 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
               <label className="form-label">Feito pela última vez em (km)</label>
               <input className="form-input" inputMode="numeric" pattern="[0-9]*" placeholder={currentKm || "0"} value={formA.lastKm} onChange={e => setFormA(p => ({ ...p, lastKm: e.target.value.replace(/\D/g, "") }))}/>
             </div>
-            <button className="btn btn-primary" onClick={saveA}>Criar alerta</button>
+            <button className="btn btn-primary" onClick={saveA}>{editingAlertId ? "Salvar alterações" : "Criar alerta"}</button>
             <button className="btn btn-ghost" onClick={() => setModalAlert(false)}>Cancelar</button>
           </div>
         </div>
