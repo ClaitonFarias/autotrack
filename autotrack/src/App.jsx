@@ -1175,7 +1175,7 @@ export default function App() {
   const [expenses, setExpensesRaw] = useStorage("expenses", []);
   const [monthBalances, setMonthBalancesRaw] = useStorage("monthBalances", {});
   const [setupModal, setSetupModal] = useState(false);
-  const [setupForm, setSetupForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "11" });
+  const [setupForm, setSetupForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "" });
 
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
