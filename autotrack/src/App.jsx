@@ -1426,6 +1426,24 @@ export default function App() {
               <p style={{ fontSize: 14, color: theme.textSecondary, textAlign: "center", marginBottom: 20, lineHeight: 1.6 }}>
                 Vamos começar cadastrando seu veículo.
               </p>
+
+              {/* Login Google dentro do setup */}
+              {!gsUser && (
+                <div style={{ marginBottom: 16 }}>
+                  <button onClick={async () => { await handleGoogleLogin(); }} disabled={!gapiReady || syncing}
+                    style={{ width: "100%", background: "#fff", color: "#333", border: `1px solid ${theme.border}`, borderRadius: 14, padding: "12px", fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <span>🔑</span> {syncing ? "Conectando..." : "Entrar com Google primeiro"}
+                  </button>
+                  <div style={{ textAlign: "center", fontSize: 11, color: theme.textMuted, margin: "10px 0" }}>ou cadastre o veículo sem conta</div>
+                </div>
+              )}
+              {gsUser && (
+                <div style={{ background: theme.accentSoft, border: `1px solid ${theme.accent}`, borderRadius: 12, padding: "10px 14px", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                  {gsUser.picture && <img src={gsUser.picture} style={{ width: 24, height: 24, borderRadius: "50%" }} alt=""/>}
+                  <div style={{ fontSize: 13, color: theme.accent, fontWeight: 500 }}>✓ Conectado como {gsUser.name}</div>
+                </div>
+              )}
+
               <div className="form-group">
                 <label className="form-label">Nome / Apelido</label>
                 <input className="form-input" placeholder="Ex: Meu Carro" value={setupForm.name} onChange={e => setSetupForm(p => ({ ...p, name: e.target.value }))}/>
