@@ -1134,19 +1134,221 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
   );
 };
 
+// ─── GOOGLE SHEETS INTEGRATION ──────────────────────────────────────────────
+const GAPI_CLIENT_ID = "7240714398-a59mjh72vsoj4cc9n6f839mmtm9qnbc9.apps.googleusercontent.com";
+const SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file";
+const SPREADSHEET_NAME = "AutoTrack Dados";
+
+const gapi = {
+  tokenClient: null,
+  accessToken: null,
+
+  async init() {
+    return new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.onload = () => {
+        gapi.tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: GAPI_CLIENT_ID,
+          scope: SCOPES,
+          callback: (resp) => {
+            if (resp.access_token) {
+              gapi.accessToken = resp.access_token;
+              localStorage.setItem("gapi_token", resp.access_token);
+            }
+          },
+        });
+        resolve();
+      };
+      document.head.appendChild(script);
+    });
+  },
+
+  async signIn() {
+    return new Promise((resolve, reject) => {
+      if (!gapi.tokenClient) { reject("not initialized"); return; }
+      gapi.tokenClient.callback = (resp) => {
+        if (resp.error) { reject(resp.error); return; }
+        gapi.accessToken = resp.access_token;
+        localStorage.setItem("gapi_token", resp.access_token);
+        resolve(resp.access_token);
+      };
+      gapi.tokenClient.requestAccessToken({ prompt: "consent" });
+    });
+  },
+
+  async request(method, url, body) {
+    const token = gapi.accessToken || localStorage.getItem("gapi_token");
+    if (!token) throw new Error("not authenticated");
+    const res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 401) { gapi.accessToken = null; localStorage.removeItem("gapi_token"); throw new Error("token expired"); }
+    return res.json();
+  },
+
+  async findOrCreateSpreadsheet() {
+    // Busca planilha existente
+    const search = await gapi.request("GET",
+      `https://www.googleapis.com/drive/v3/files?q=name='${SPREADSHEET_NAME}' and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`
+    );
+    if (search.files && search.files.length > 0) return search.files[0].id;
+
+    // Cria nova planilha
+    const created = await gapi.request("POST", "https://sheets.googleapis.com/v4/spreadsheets", {
+      properties: { title: SPREADSHEET_NAME },
+      sheets: [
+        { properties: { title: "vehicles" } },
+        { properties: { title: "trips" } },
+        { properties: { title: "fuels" } },
+        { properties: { title: "maintenances" } },
+        { properties: { title: "alerts" } },
+        { properties: { title: "expenses" } },
+        { properties: { title: "monthBalances" } },
+      ],
+    });
+    return created.spreadsheetId;
+  },
+
+  async saveData(spreadsheetId, sheetName, data) {
+    const rows = [["json"], [JSON.stringify(data)]];
+    await gapi.request("PUT",
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:A2?valueInputOption=RAW`,
+      { values: rows }
+    );
+  },
+
+  async loadData(spreadsheetId, sheetName) {
+    const res = await gapi.request("GET",
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A2`
+    );
+    if (res.values && res.values[0] && res.values[0][0]) {
+      try { return JSON.parse(res.values[0][0]); } catch { return null; }
+    }
+    return null;
+  },
+};
+
 // ─── APP ROOT ────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("dashboard");
-  const [vehicles, setVehicles] = useStorage("vehicles", []);
+  const [vehicles, setVehiclesRaw] = useStorage("vehicles", []);
   const [currentVehicleId, setCurrentVehicleId] = useStorage("currentVehicleId", null);
-  const [trips, setTrips] = useStorage("trips", []);
-  const [fuels, setFuels] = useStorage("fuels", []);
-  const [maintenances, setMaintenances] = useStorage("maintenances", []);
-  const [alerts, setAlerts] = useStorage("alerts", []);
-  const [expenses, setExpenses] = useStorage("expenses", []);
-  const [monthBalances, setMonthBalances] = useStorage("monthBalances", {});
+  const [trips, setTripsRaw] = useStorage("trips", []);
+  const [fuels, setFuelsRaw] = useStorage("fuels", []);
+  const [maintenances, setMaintenancesRaw] = useStorage("maintenances", []);
+  const [alerts, setAlertsRaw] = useStorage("alerts", []);
+  const [expenses, setExpensesRaw] = useStorage("expenses", []);
+  const [monthBalances, setMonthBalancesRaw] = useStorage("monthBalances", {});
   const [setupModal, setSetupModal] = useState(false);
   const [setupForm, setSetupForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "11" });
+
+  // Google Sheets state
+  const [gsUser, setGsUser] = useStorage("gs_user", null);
+  const [spreadsheetId, setSpreadsheetId] = useStorage("gs_spreadsheet_id", null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null); // "ok" | "error" | null
+  const [gapiReady, setGapiReady] = useState(false);
+
+  useEffect(() => {
+    gapi.init().then(() => setGapiReady(true));
+    // Restaurar token salvo
+    const saved = localStorage.getItem("gapi_token");
+    if (saved) gapi.accessToken = saved;
+  }, []);
+
+  // Sync automático sempre que dados mudam
+  const syncTimeout = useCallback(
+    (() => {
+      let t = null;
+      return (fn) => { clearTimeout(t); t = setTimeout(fn, 2000); };
+    })(), []
+  );
+
+  const syncToSheets = useCallback(async (data) => {
+    if (!spreadsheetId || !gapi.accessToken) return;
+    setSyncing(true);
+    try {
+      await Promise.all([
+        gapi.saveData(spreadsheetId, "vehicles", data.vehicles ?? vehicles),
+        gapi.saveData(spreadsheetId, "trips", data.trips ?? trips),
+        gapi.saveData(spreadsheetId, "fuels", data.fuels ?? fuels),
+        gapi.saveData(spreadsheetId, "maintenances", data.maintenances ?? maintenances),
+        gapi.saveData(spreadsheetId, "alerts", data.alerts ?? alerts),
+        gapi.saveData(spreadsheetId, "expenses", data.expenses ?? expenses),
+        gapi.saveData(spreadsheetId, "monthBalances", data.monthBalances ?? monthBalances),
+      ]);
+      setSyncStatus("ok");
+    } catch (e) {
+      setSyncStatus("error");
+    } finally {
+      setSyncing(false);
+    }
+  }, [spreadsheetId, vehicles, trips, fuels, maintenances, alerts, expenses, monthBalances]);
+
+  // Wrappers que salvam localmente e disparam sync
+  const makeSetter = (raw, key) => (val) => {
+    raw(val);
+    syncTimeout(() => syncToSheets({ [key]: typeof val === "function" ? val(eval(key)) : val }));
+  };
+
+  const setVehicles = (v) => { setVehiclesRaw(v); syncTimeout(() => syncToSheets({ vehicles: typeof v === "function" ? v(vehicles) : v })); };
+  const setTrips = (v) => { setTripsRaw(v); syncTimeout(() => syncToSheets({ trips: typeof v === "function" ? v(trips) : v })); };
+  const setFuels = (v) => { setFuelsRaw(v); syncTimeout(() => syncToSheets({ fuels: typeof v === "function" ? v(fuels) : v })); };
+  const setMaintenances = (v) => { setMaintenancesRaw(v); syncTimeout(() => syncToSheets({ maintenances: typeof v === "function" ? v(maintenances) : v })); };
+  const setAlerts = (v) => { setAlertsRaw(v); syncTimeout(() => syncToSheets({ alerts: typeof v === "function" ? v(alerts) : v })); };
+  const setExpenses = (v) => { setExpensesRaw(v); syncTimeout(() => syncToSheets({ expenses: typeof v === "function" ? v(expenses) : v })); };
+  const setMonthBalances = (v) => { setMonthBalancesRaw(v); syncTimeout(() => syncToSheets({ monthBalances: typeof v === "function" ? v(monthBalances) : v })); };
+
+  const handleGoogleLogin = async () => {
+    if (!gapiReady) return;
+    setSyncing(true);
+    try {
+      await gapi.signIn();
+      // Buscar info do usuário
+      const userInfo = await gapi.request("GET", "https://www.googleapis.com/oauth2/v3/userinfo");
+      setGsUser({ name: userInfo.name, email: userInfo.email, picture: userInfo.picture });
+
+      // Encontrar ou criar planilha
+      const sheetId = await gapi.findOrCreateSpreadsheet();
+      setSpreadsheetId(sheetId);
+
+      // Carregar dados existentes da planilha
+      const [v, t, f, m, a, e, mb] = await Promise.all([
+        gapi.loadData(sheetId, "vehicles"),
+        gapi.loadData(sheetId, "trips"),
+        gapi.loadData(sheetId, "fuels"),
+        gapi.loadData(sheetId, "maintenances"),
+        gapi.loadData(sheetId, "alerts"),
+        gapi.loadData(sheetId, "expenses"),
+        gapi.loadData(sheetId, "monthBalances"),
+      ]);
+
+      if (v && v.length > 0) { setVehiclesRaw(v); setCurrentVehicleId(v[0].id); }
+      if (t) setTripsRaw(t);
+      if (f) setFuelsRaw(f);
+      if (m) setMaintenancesRaw(m);
+      if (a) setAlertsRaw(a);
+      if (e) setExpensesRaw(e);
+      if (mb) setMonthBalancesRaw(mb);
+
+      setSyncStatus("ok");
+    } catch (err) {
+      setSyncStatus("error");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleLogout = () => {
+    gapi.accessToken = null;
+    localStorage.removeItem("gapi_token");
+    setGsUser(null);
+    setSpreadsheetId(null);
+    setSyncStatus(null);
+  };
 
   // Primeiro acesso
   useEffect(() => {
@@ -1171,10 +1373,34 @@ export default function App() {
 
   const props = { vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, trips, setTrips, fuels, setFuels, maintenances, setMaintenances, alerts, setAlerts, expenses, setExpenses, setTab, monthBalances, setMonthBalances };
 
+  const syncIndicator = syncing ? "⏳" : syncStatus === "ok" ? "☁️" : syncStatus === "error" ? "⚠️" : null;
+
   return (
     <>
       <style>{css}</style>
       <div className="app">
+        {/* Barra de login Google */}
+        {!gsUser ? (
+          <div style={{ background: theme.surface, borderBottom: `1px solid ${theme.border}`, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 12, color: theme.textSecondary }}>Conecte para salvar na nuvem</div>
+            <button onClick={handleGoogleLogin} disabled={!gapiReady || syncing}
+              style={{ background: theme.accent, color: "#fff", border: "none", borderRadius: 10, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              {syncing ? "Conectando..." : "Entrar com Google"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ background: theme.surface, borderBottom: `1px solid ${theme.border}`, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {gsUser.picture && <img src={gsUser.picture} style={{ width: 24, height: 24, borderRadius: "50%" }} alt=""/>}
+              <div style={{ fontSize: 12, color: theme.textSecondary }}>{gsUser.name}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {syncIndicator && <span style={{ fontSize: 14 }} title={syncing ? "Sincronizando..." : syncStatus === "ok" ? "Salvo na nuvem" : "Erro ao sincronizar"}>{syncIndicator}</span>}
+              <span style={{ fontSize: 11, color: theme.textMuted, cursor: "pointer" }} onClick={handleLogout}>Sair</span>
+            </div>
+          </div>
+        )}
+
         {tab === "dashboard" && <Dashboard {...props}/>}
         {tab === "trips" && <Trips {...props}/>}
         {tab === "fuels" && <Fuels {...props}/>}
