@@ -1136,7 +1136,7 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
 
 // ─── FIREBASE ────────────────────────────────────────────────────────────────
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -1182,13 +1182,12 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
 
-  // Observar estado de autenticação
+  // Observar estado de autenticação e resultado do redirect
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
       if (u) {
-        // Carregar dados do Firebase
         setSyncing(true);
         try {
           const [v, t, f, m, a, e, mb] = await Promise.all([
@@ -1242,7 +1241,7 @@ export default function App() {
   const setMonthBalances = (v) => { const val = typeof v === "function" ? v(monthBalances) : v; setMonthBalancesRaw(val); sync("monthBalances", val); };
 
   const handleLogin = async () => {
-    try { await signInWithPopup(auth, provider); }
+    try { await signInWithRedirect(auth, provider); }
     catch (e) { console.error(e); }
   };
 
