@@ -522,8 +522,9 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
 };
 
 // ─── PERCURSOS ───────────────────────────────────────────────────────────────
-const Trips = ({ trips, setTrips, vehicles, currentVehicleId }) => {
+const Trips = ({ trips, setTrips, vehicles, setVehicles, currentVehicleId }) => {
   const [modal, setModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "" });
   const [month, setMonth] = useState(fmt.nowMonth());
 
@@ -534,14 +535,34 @@ const Trips = ({ trips, setTrips, vehicles, currentVehicleId }) => {
   const monthTrips = trips.filter(t => t.vehicleId === currentVehicleId && fmt.monthKey(t.date) === month).sort((a, b) => b.date.localeCompare(a.date));
   const totalKm = monthTrips.reduce((a, t) => a + (t.kmFinal - t.kmInitial), 0);
 
+  const openNew = () => { setEditingId(null); setForm({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "" }); setModal(true); };
+  const openEdit = (t) => { setEditingId(t.id); setForm({ date: t.date, kmInitial: String(t.kmInitial), kmFinal: String(t.kmFinal), destination: t.destination || "" }); setModal(true); };
+
+  const updateKmAuto = (allTrips) => {
+    const maxKm = Math.max(...allTrips.filter(t => t.vehicleId === currentVehicleId).map(t => t.kmFinal), 0);
+    if (maxKm > 0) setVehicles(prev => prev.map(v => v.id === currentVehicleId && maxKm > (v.currentKm || 0) ? { ...v, currentKm: maxKm } : v));
+  };
+
   const save = () => {
     if (!form.kmInitial || !form.kmFinal || +form.kmFinal <= +form.kmInitial) return;
-    setTrips(prev => [...prev, { ...form, id: uid(), vehicleId: currentVehicleId, kmInitial: +form.kmInitial, kmFinal: +form.kmFinal }]);
+    let updated;
+    if (editingId) {
+      updated = trips.map(t => t.id === editingId ? { ...t, ...form, kmInitial: +form.kmInitial, kmFinal: +form.kmFinal } : t);
+    } else {
+      updated = [...trips, { ...form, id: uid(), vehicleId: currentVehicleId, kmInitial: +form.kmInitial, kmFinal: +form.kmFinal }];
+    }
+    setTrips(updated);
+    updateKmAuto(updated);
     setModal(false);
+    setEditingId(null);
     setForm({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "" });
   };
 
-  const remove = (id) => setTrips(prev => prev.filter(t => t.id !== id));
+  const remove = (id) => {
+    const updated = trips.filter(t => t.id !== id);
+    setTrips(updated);
+    updateKmAuto(updated);
+  };
 
   return (
     <div>
@@ -565,25 +586,28 @@ const Trips = ({ trips, setTrips, vehicles, currentVehicleId }) => {
         ) : monthTrips.map(t => (
           <div key={t.id} className="list-item">
             <div className="list-icon" style={{ background: theme.accentSoft }}><Icon name="route" size={16}/></div>
-            <div className="list-main">
+            <div className="list-main" onClick={() => openEdit(t)} style={{ cursor: "pointer" }}>
               <div className="list-title">{t.destination || "Percurso"}</div>
               <div className="list-sub">{fmt.date(t.date)} · {fmt.kmNum(t.kmInitial)} → {fmt.kmNum(t.kmFinal)}</div>
             </div>
             <div className="list-right">
               <div className="list-value" style={{ color: theme.accent }}>{fmt.km(t.kmFinal - t.kmInitial)}</div>
-              <div style={{ marginTop: 4, cursor: "pointer", color: theme.danger }} onClick={() => remove(t.id)}><Icon name="trash" size={14}/></div>
+              <div style={{ display: "flex", gap: 10, marginTop: 4, justifyContent: "flex-end" }}>
+                <span style={{ cursor: "pointer", color: theme.accent }} onClick={() => openEdit(t)}><Icon name="edit" size={14}/></span>
+                <span style={{ cursor: "pointer", color: theme.danger }} onClick={() => remove(t.id)}><Icon name="trash" size={14}/></span>
+              </div>
             </div>
           </div>
         ))}
       </div>
 
-      <button className="fab" onClick={() => setModal(true)}><Icon name="plus"/></button>
+      <button className="fab" onClick={openNew}><Icon name="plus"/></button>
 
       {modal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setModal(false)}>
           <div className="modal">
             <div className="modal-handle"/>
-            <div className="modal-title">Novo percurso</div>
+            <div className="modal-title">{editingId ? "Editar percurso" : "Novo percurso"}</div>
             <div className="form-group">
               <label className="form-label">Data</label>
               <input className="form-input" type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))}/>
@@ -610,7 +634,7 @@ const Trips = ({ trips, setTrips, vehicles, currentVehicleId }) => {
                 <span style={{ color: theme.textSecondary, fontSize: 13, marginLeft: 8 }}>neste percurso</span>
               </div>
             )}
-            <button className="btn btn-primary" onClick={save}>Salvar percurso</button>
+            <button className="btn btn-primary" onClick={save}>{editingId ? "Salvar alterações" : "Salvar percurso"}</button>
             <button className="btn btn-ghost" onClick={() => setModal(false)}>Cancelar</button>
           </div>
         </div>
@@ -748,6 +772,7 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
   const [tab, setTab] = useState("history");
   const [modalMaint, setModalMaint] = useState(false);
   const [modalAlert, setModalAlert] = useState(false);
+  const [editingMaintId, setEditingMaintId] = useState(null);
   const [formM, setFormM] = useState({ date: fmt.today(), km: "", type: "", value: "", notes: "" });
   const [formA, setFormA] = useState({ name: "", interval: "", warnBefore: "", lastKm: "" });
 
@@ -757,10 +782,18 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
   const vMaintenances = maintenances.filter(m => m.vehicleId === currentVehicleId).sort((a, b) => b.date.localeCompare(a.date));
   const vAlerts = alerts.filter(a => a.vehicleId === currentVehicleId);
 
+  const openNewM = () => { setEditingMaintId(null); setFormM({ date: fmt.today(), km: "", type: "", value: "", notes: "" }); setModalMaint(true); };
+  const openEditM = (m) => { setEditingMaintId(m.id); setFormM({ date: m.date, km: String(m.km), type: m.type, value: String(m.value || ""), notes: m.notes || "" }); setModalMaint(true); };
+
   const saveM = () => {
     if (!formM.type || !formM.km) return;
-    setMaintenances(prev => [...prev, { ...formM, id: uid(), vehicleId: currentVehicleId, km: +formM.km, value: +formM.value }]);
+    if (editingMaintId) {
+      setMaintenances(prev => prev.map(m => m.id === editingMaintId ? { ...m, ...formM, km: +formM.km, value: +formM.value } : m));
+    } else {
+      setMaintenances(prev => [...prev, { ...formM, id: uid(), vehicleId: currentVehicleId, km: +formM.km, value: +formM.value }]);
+    }
     setModalMaint(false);
+    setEditingMaintId(null);
     setFormM({ date: fmt.today(), km: "", type: "", value: "", notes: "" });
   };
 
@@ -800,14 +833,17 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
             ) : vMaintenances.map(m => (
               <div key={m.id} className="list-item">
                 <div className="list-icon" style={{ background: "rgba(45,212,160,.1)" }}><Icon name="wrench" size={16}/></div>
-                <div className="list-main">
+                <div className="list-main" onClick={() => openEditM(m)} style={{ cursor: "pointer" }}>
                   <div className="list-title">{m.type}</div>
                   <div className="list-sub">{fmt.date(m.date)} · {fmt.km(m.km)}</div>
                   {m.notes && <div className="list-sub" style={{ marginTop: 2 }}>{m.notes}</div>}
                 </div>
                 <div className="list-right">
                   {m.value > 0 && <div className="list-value" style={{ color: theme.success }}>{fmt.brl(m.value)}</div>}
-                  <div style={{ marginTop: 4, cursor: "pointer", color: theme.danger }} onClick={() => removeM(m.id)}><Icon name="trash" size={14}/></div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 4, justifyContent: "flex-end" }}>
+                    <span style={{ cursor: "pointer", color: theme.accent }} onClick={() => openEditM(m)}><Icon name="edit" size={14}/></span>
+                    <span style={{ cursor: "pointer", color: theme.danger }} onClick={() => removeM(m.id)}><Icon name="trash" size={14}/></span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -853,14 +889,14 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
         )}
       </div>
 
-      {tab === "history" && <button className="fab" onClick={() => setModalMaint(true)}><Icon name="plus"/></button>}
+      {tab === "history" && <button className="fab" onClick={openNewM}><Icon name="plus"/></button>}
 
       {/* Modal manutenção */}
       {modalMaint && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setModalMaint(false)}>
           <div className="modal">
             <div className="modal-handle"/>
-            <div className="modal-title">Nova manutenção</div>
+            <div className="modal-title">{editingMaintId ? "Editar manutenção" : "Nova manutenção"}</div>
             <div className="form-group">
               <label className="form-label">Tipo</label>
               <input className="form-input" placeholder="Ex: Troca de óleo, Alinhamento..." value={formM.type} onChange={e => setFormM(p => ({ ...p, type: e.target.value }))}/>
@@ -883,7 +919,7 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
               <label className="form-label">Observações</label>
               <input className="form-input" placeholder="Opcional..." value={formM.notes} onChange={e => setFormM(p => ({ ...p, notes: e.target.value }))}/>
             </div>
-            <button className="btn btn-primary" onClick={saveM}>Salvar manutenção</button>
+            <button className="btn btn-primary" onClick={saveM}>{editingMaintId ? "Salvar alterações" : "Salvar manutenção"}</button>
             <button className="btn btn-ghost" onClick={() => setModalMaint(false)}>Cancelar</button>
           </div>
         </div>
