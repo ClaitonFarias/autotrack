@@ -1352,8 +1352,8 @@ export default function App() {
 
   // Primeiro acesso
   useEffect(() => {
-    if (vehicles.length === 0) setSetupModal(true);
-  }, []);
+    if (vehicles.length === 0 && gsUser) setSetupModal(true);
+  }, [gsUser]);
 
   const finishSetup = () => {
     if (!setupForm.name) return;
