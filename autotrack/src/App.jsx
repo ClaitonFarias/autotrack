@@ -335,9 +335,14 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
           <div className="header-title">AutoTrack</div>
           <div className="header-sub">{vehicle ? vehicle.name : "Nenhum veículo"}</div>
         </div>
-        {activeAlerts.length > 0 && (
-          <div className="header-badge">⚠️ {activeAlerts.length} alerta{activeAlerts.length > 1 ? "s" : ""}</div>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {activeAlerts.length > 0 && (
+            <div className="header-badge">⚠️ {activeAlerts.length} alerta{activeAlerts.length > 1 ? "s" : ""}</div>
+          )}
+          <button onClick={() => setTab("settings")} style={{ background: theme.card, border: `1px solid ${theme.border}`, borderRadius: 10, width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: theme.textSecondary }}>
+            <Icon name="settings" size={18}/>
+          </button>
+        </div>
       </div>
 
       <div className="content">
@@ -972,13 +977,15 @@ const Maintenance = ({ maintenances, setMaintenances, alerts, setAlerts, vehicle
 };
 
 // ─── DESPESAS ────────────────────────────────────────────────────────────────
-const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId }) => {
+const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId, maintenances, fuels, trips }) => {
   const [modal, setModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ date: fmt.today(), type: "seguro", value: "", notes: "" });
+  const [viewMode, setViewMode] = useState("list"); // "list" | "annual"
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   const vehicle = vehicles.find(v => v.id === currentVehicleId);
   const vExpenses = expenses.filter(e => e.vehicleId === currentVehicleId).sort((a, b) => b.date.localeCompare(a.date));
-  const total = vExpenses.reduce((a, e) => a + +e.value, 0);
 
   const types = [
     { key: "seguro", label: "Seguro", icon: "🛡️" },
@@ -988,14 +995,34 @@ const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId }) => {
     { key: "outro", label: "Outro", icon: "💸" },
   ];
 
+  const openNew = () => { setEditingId(null); setForm({ date: fmt.today(), type: "seguro", value: "", notes: "" }); setModal(true); };
+  const openEdit = (e) => { setEditingId(e.id); setForm({ date: e.date, type: e.type, value: e.value, notes: e.notes || "" }); setModal(true); };
+
   const save = () => {
     if (!form.value) return;
-    setExpenses(prev => [...prev, { ...form, id: uid(), vehicleId: currentVehicleId, value: +form.value }]);
+    if (editingId) {
+      setExpenses(prev => prev.map(e => e.id === editingId ? { ...e, ...form, value: +form.value } : e));
+    } else {
+      setExpenses(prev => [...prev, { ...form, id: uid(), vehicleId: currentVehicleId, value: +form.value }]);
+    }
     setModal(false);
+    setEditingId(null);
     setForm({ date: fmt.today(), type: "seguro", value: "", notes: "" });
   };
 
   const remove = (id) => setExpenses(prev => prev.filter(e => e.id !== id));
+
+  // Evolutivo anual
+  const years = [...new Set(vExpenses.map(e => new Date(e.date).getFullYear()))].sort().reverse();
+  if (!years.includes(selectedYear)) years.unshift(selectedYear);
+
+  const yearExpenses = vExpenses.filter(e => new Date(e.date).getFullYear() === selectedYear);
+  const yearFuelCost = fuels.filter(f => f.vehicleId === currentVehicleId && new Date(f.date).getFullYear() === selectedYear).reduce((a, f) => a + +f.total, 0);
+  const yearMaintCost = maintenances.filter(m => m.vehicleId === currentVehicleId && new Date(m.date).getFullYear() === selectedYear).reduce((a, m) => a + +m.value, 0);
+  const yearFixedCost = yearExpenses.reduce((a, e) => a + +e.value, 0);
+  const yearTotal = yearFuelCost + yearMaintCost + yearFixedCost;
+  const yearKm = trips.filter(t => t.vehicleId === currentVehicleId && new Date(t.date).getFullYear() === selectedYear).reduce((a, t) => a + (t.kmFinal - t.kmInitial), 0);
+  const costPerKm = yearKm > 0 ? yearTotal / yearKm : 0;
 
   return (
     <div>
@@ -1004,36 +1031,102 @@ const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId }) => {
           <div className="header-title">Despesas</div>
           <div className="header-sub">{vehicle?.name}</div>
         </div>
-        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 18, color: theme.warning }}>{fmt.brl(total)}</div>
       </div>
       <div className="content">
-        {vExpenses.length === 0 ? (
-          <div className="empty"><div className="empty-icon">💸</div><div className="empty-text">Nenhuma despesa registrada.<br/>IPVA, seguro, multas...</div></div>
-        ) : vExpenses.map(e => {
-          const t = types.find(x => x.key === e.type) || types[4];
-          return (
-            <div key={e.id} className="list-item">
-              <div className="list-icon" style={{ background: "rgba(247,169,79,.1)", fontSize: 18 }}>{t.icon}</div>
-              <div className="list-main">
-                <div className="list-title">{t.label}</div>
-                <div className="list-sub">{fmt.date(e.date)}{e.notes ? ` · ${e.notes}` : ""}</div>
+        <div className="tab-row">
+          <div className={`tab ${viewMode === "list" ? "active" : ""}`} onClick={() => setViewMode("list")}>Lançamentos</div>
+          <div className={`tab ${viewMode === "annual" ? "active" : ""}`} onClick={() => setViewMode("annual")}>Custo anual</div>
+        </div>
+
+        {viewMode === "list" && (
+          <>
+            {vExpenses.length === 0 ? (
+              <div className="empty"><div className="empty-icon">💸</div><div className="empty-text">Nenhuma despesa registrada.<br/>IPVA, seguro, multas...</div></div>
+            ) : vExpenses.map(e => {
+              const t = types.find(x => x.key === e.type) || types[4];
+              return (
+                <div key={e.id} className="list-item">
+                  <div className="list-icon" style={{ background: "rgba(247,169,79,.1)", fontSize: 18 }}>{t.icon}</div>
+                  <div className="list-main" onClick={() => openEdit(e)} style={{ cursor: "pointer" }}>
+                    <div className="list-title">{t.label}</div>
+                    <div className="list-sub">{fmt.date(e.date)}{e.notes ? ` · ${e.notes}` : ""}</div>
+                  </div>
+                  <div className="list-right">
+                    <div className="list-value" style={{ color: theme.warning }}>{fmt.brl(e.value)}</div>
+                    <div style={{ display: "flex", gap: 10, marginTop: 4, justifyContent: "flex-end" }}>
+                      <span style={{ cursor: "pointer", color: theme.accent }} onClick={() => openEdit(e)}><Icon name="edit" size={14}/></span>
+                      <span style={{ cursor: "pointer", color: theme.danger }} onClick={() => remove(e.id)}><Icon name="trash" size={14}/></span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {viewMode === "annual" && (
+          <>
+            <div className="month-nav">
+              <button className="month-btn" onClick={() => setSelectedYear(y => y - 1)}><Icon name="chevLeft" size={16}/></button>
+              <span className="month-label">{selectedYear}</span>
+              <button className="month-btn" onClick={() => setSelectedYear(y => y + 1)}><Icon name="chevRight" size={16}/></button>
+            </div>
+
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: theme.textSecondary, marginBottom: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".5px" }}>Custo total do veículo</div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 28, fontWeight: 700, color: theme.danger, marginBottom: 16 }}>{fmt.brl(yearTotal)}</div>
+              {yearKm > 0 && <div style={{ fontSize: 13, color: theme.textSecondary }}>R$ {costPerKm.toFixed(2).replace(".", ",")} por km rodado · {fmt.km(yearKm)}</div>}
+            </div>
+
+            <div className="metric-grid">
+              <div className="metric-card">
+                <div className="metric-label">Combustível</div>
+                <div className="metric-value warning">{fmt.brl(yearFuelCost)}</div>
+                <div className="metric-sub">{yearTotal > 0 ? Math.round(yearFuelCost / yearTotal * 100) : 0}% do total</div>
               </div>
-              <div className="list-right">
-                <div className="list-value" style={{ color: theme.warning }}>{fmt.brl(e.value)}</div>
-                <div style={{ marginTop: 4, cursor: "pointer", color: theme.danger }} onClick={() => remove(e.id)}><Icon name="trash" size={14}/></div>
+              <div className="metric-card">
+                <div className="metric-label">Manutenção</div>
+                <div className="metric-value success">{fmt.brl(yearMaintCost)}</div>
+                <div className="metric-sub">{yearTotal > 0 ? Math.round(yearMaintCost / yearTotal * 100) : 0}% do total</div>
+              </div>
+              <div className="metric-card" style={{ gridColumn: "1 / -1" }}>
+                <div className="metric-label">Fixas (IPVA, Seguro...)</div>
+                <div className="metric-value" style={{ color: theme.accent }}>{fmt.brl(yearFixedCost)}</div>
+                <div className="metric-sub">{yearTotal > 0 ? Math.round(yearFixedCost / yearTotal * 100) : 0}% do total</div>
               </div>
             </div>
-          );
-        })}
+
+            {yearExpenses.length > 0 && (
+              <>
+                <div className="section-title">Despesas fixas em {selectedYear}</div>
+                {yearExpenses.map(e => {
+                  const t = types.find(x => x.key === e.type) || types[4];
+                  return (
+                    <div key={e.id} className="list-item">
+                      <div className="list-icon" style={{ background: "rgba(247,169,79,.1)", fontSize: 18 }}>{t.icon}</div>
+                      <div className="list-main">
+                        <div className="list-title">{t.label}</div>
+                        <div className="list-sub">{fmt.date(e.date)}{e.notes ? ` · ${e.notes}` : ""}</div>
+                      </div>
+                      <div className="list-right">
+                        <div className="list-value" style={{ color: theme.warning }}>{fmt.brl(e.value)}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </>
+        )}
       </div>
 
-      <button className="fab" onClick={() => setModal(true)}><Icon name="plus"/></button>
+      <button className="fab" onClick={openNew}><Icon name="plus"/></button>
 
       {modal && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setModal(false)}>
           <div className="modal">
             <div className="modal-handle"/>
-            <div className="modal-title">Nova despesa</div>
+            <div className="modal-title">{editingId ? "Editar despesa" : "Nova despesa"}</div>
             <div className="form-group">
               <label className="form-label">Tipo</label>
               <div className="chip-row">
@@ -1058,7 +1151,7 @@ const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId }) => {
               <label className="form-label">Observações</label>
               <input className="form-input" placeholder="Opcional..." value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}/>
             </div>
-            <button className="btn btn-primary" onClick={save}>Salvar despesa</button>
+            <button className="btn btn-primary" onClick={save}>{editingId ? "Salvar alterações" : "Salvar despesa"}</button>
             <button className="btn btn-ghost" onClick={() => setModal(false)}>Cancelar</button>
           </div>
         </div>
@@ -1264,7 +1357,7 @@ export default function App() {
     { key: "trips", icon: "route", label: "Percursos" },
     { key: "fuels", icon: "fuel", label: "Combustível" },
     { key: "maintenance", icon: "wrench", label: "Manutenção" },
-    { key: "settings", icon: "settings", label: "Config" },
+    { key: "expenses", icon: "wallet", label: "Despesas" },
   ];
 
   const props = { vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, trips, setTrips, fuels, setFuels, maintenances, setMaintenances, alerts, setAlerts, expenses, setExpenses, setTab, monthBalances, setMonthBalances, exportData, importData };
@@ -1277,6 +1370,7 @@ export default function App() {
         {tab === "trips" && <Trips {...props}/>}
         {tab === "fuels" && <Fuels {...props}/>}
         {tab === "maintenance" && <Maintenance {...props}/>}
+        {tab === "expenses" && <Expenses {...props}/>}
         {tab === "settings" && <Settings {...props}/>}
 
         <nav className="bottom-nav">
