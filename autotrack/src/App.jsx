@@ -198,6 +198,18 @@ const fmt = {
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+const MEDIA_PADRAO_KM_L = 11;
+
+// Aceita vírgula ou ponto, 1 casa decimal. Inválido retorna 0.
+const parseKmL = (texto) => {
+  const valor = parseFloat(String(texto ?? "").replace(",", "."));
+  return valor > 0 ? Math.round(valor * 10) / 10 : 0;
+};
+
+const sanitizeKmL = (texto) => texto.replace(/[^\d.,]/g, "").replace(/[.,](?=.*[.,])/g, "");
+
+const formatKmL = (valor) => Number(valor).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
 // ─── CURRENCY INPUT ─────────────────────────────────────────────────────────
 const CurrencyInput = ({ value, onChange, placeholder = "R$ 0,00", className = "form-input", style = {} }) => {
   const format = (raw) => {
@@ -289,8 +301,10 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
     .sort((a, b) => b.date.localeCompare(a.date));
   const lastPricePerLiter = allFuelsUpToMonth.length ? +allFuelsUpToMonth[0].pricePerLiter : 0;
 
-  const avgKmL = vehicle?.avgKmL || 11;
-  const estimatedLiters = avgKmL > 0 ? totalKm / avgKmL : 0;
+  const vehicleAvgKmL = vehicle?.avgKmL || MEDIA_PADRAO_KM_L;
+  // Percurso com média própria usa ela; senão a do veículo
+  const estimatedLiters = monthTrips.reduce((a, t) => a + (t.kmFinal - t.kmInitial) / (t.avgKmL || vehicleAvgKmL), 0);
+  const avgKmL = estimatedLiters > 0 ? totalKm / estimatedLiters : vehicleAvgKmL;
   const estimatedCost = estimatedLiters * lastPricePerLiter;
 
   // Saldo mês anterior
@@ -394,7 +408,7 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <div className="metric-label" style={{ marginBottom: 0 }}>Combustível</div>
             {lastPricePerLiter > 0 && (
-              <div style={{ fontSize: 11, color: theme.textMuted }}>R$ {lastPricePerLiter.toFixed(3).replace(".", ",")} /L · {avgKmL} km/L</div>
+              <div style={{ fontSize: 11, color: theme.textMuted }}>R$ {lastPricePerLiter.toFixed(3).replace(".", ",")} /L · {formatKmL(avgKmL)} km/L</div>
             )}
           </div>
 
@@ -530,7 +544,7 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
 const Trips = ({ trips, setTrips, vehicles, setVehicles, currentVehicleId }) => {
   const [modal, setModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "" });
+  const [form, setForm] = useState({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "", avgKmL: "" });
   const [month, setMonth] = useState(fmt.nowMonth());
 
   const vehicle = vehicles.find(v => v.id === currentVehicleId);
@@ -540,8 +554,8 @@ const Trips = ({ trips, setTrips, vehicles, setVehicles, currentVehicleId }) => 
   const monthTrips = trips.filter(t => t.vehicleId === currentVehicleId && fmt.monthKey(t.date) === month).sort((a, b) => b.date.localeCompare(a.date));
   const totalKm = monthTrips.reduce((a, t) => a + (t.kmFinal - t.kmInitial), 0);
 
-  const openNew = () => { setEditingId(null); setForm({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "" }); setModal(true); };
-  const openEdit = (t) => { setEditingId(t.id); setForm({ date: t.date, kmInitial: String(t.kmInitial), kmFinal: String(t.kmFinal), destination: t.destination || "" }); setModal(true); };
+  const openNew = () => { setEditingId(null); setForm({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "", avgKmL: "" }); setModal(true); };
+  const openEdit = (t) => { setEditingId(t.id); setForm({ date: t.date, kmInitial: String(t.kmInitial), kmFinal: String(t.kmFinal), destination: t.destination || "", avgKmL: t.avgKmL ? String(t.avgKmL).replace(".", ",") : "" }); setModal(true); };
 
   const updateKmAuto = (allTrips) => {
     const maxKm = Math.max(...allTrips.filter(t => t.vehicleId === currentVehicleId).map(t => t.kmFinal), 0);
@@ -550,17 +564,18 @@ const Trips = ({ trips, setTrips, vehicles, setVehicles, currentVehicleId }) => 
 
   const save = () => {
     if (!form.kmInitial || !form.kmFinal || +form.kmFinal <= +form.kmInitial) return;
+    const parsed = { ...form, kmInitial: +form.kmInitial, kmFinal: +form.kmFinal, avgKmL: parseKmL(form.avgKmL) || null };
     let updated;
     if (editingId) {
-      updated = trips.map(t => t.id === editingId ? { ...t, ...form, kmInitial: +form.kmInitial, kmFinal: +form.kmFinal } : t);
+      updated = trips.map(t => t.id === editingId ? { ...t, ...parsed } : t);
     } else {
-      updated = [...trips, { ...form, id: uid(), vehicleId: currentVehicleId, kmInitial: +form.kmInitial, kmFinal: +form.kmFinal }];
+      updated = [...trips, { ...parsed, id: uid(), vehicleId: currentVehicleId }];
     }
     setTrips(updated);
     updateKmAuto(updated);
     setModal(false);
     setEditingId(null);
-    setForm({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "" });
+    setForm({ date: fmt.today(), kmInitial: "", kmFinal: "", destination: "", avgKmL: "" });
   };
 
   const remove = (id) => {
@@ -593,7 +608,7 @@ const Trips = ({ trips, setTrips, vehicles, setVehicles, currentVehicleId }) => 
             <div className="list-icon" style={{ background: theme.accentSoft }}><Icon name="route" size={16}/></div>
             <div className="list-main" onClick={() => openEdit(t)} style={{ cursor: "pointer" }}>
               <div className="list-title">{t.destination || "Percurso"}</div>
-              <div className="list-sub">{fmt.date(t.date)} · {fmt.kmNum(t.kmInitial)} → {fmt.kmNum(t.kmFinal)}</div>
+              <div className="list-sub">{fmt.date(t.date)} · {fmt.kmNum(t.kmInitial)} → {fmt.kmNum(t.kmFinal)}{t.avgKmL ? ` · ${formatKmL(t.avgKmL)} km/L` : ""}</div>
             </div>
             <div className="list-right">
               <div className="list-value" style={{ color: theme.accent }}>{fmt.km(t.kmFinal - t.kmInitial)}</div>
@@ -630,6 +645,10 @@ const Trips = ({ trips, setTrips, vehicles, setVehicles, currentVehicleId }) => 
                 <label className="form-label">KM final</label>
                 <input className="form-input" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={form.kmFinal} onChange={e => setForm(p => ({ ...p, kmFinal: e.target.value.replace(/\D/g, "") }))}/>
               </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Média km/L do percurso (opcional)</label>
+              <input className="form-input" inputMode="decimal" placeholder={`Padrão do veículo: ${formatKmL(vehicle?.avgKmL || MEDIA_PADRAO_KM_L)}`} value={form.avgKmL} onChange={e => setForm(p => ({ ...p, avgKmL: sanitizeKmL(e.target.value) }))}/>
             </div>
             {form.kmInitial && form.kmFinal && +form.kmFinal > +form.kmInitial && (
               <div className="card-sm" style={{ marginBottom: 14, background: theme.accentSoft, border: `1px solid ${theme.accent}` }}>
@@ -1167,11 +1186,11 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
   const [form, setForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "11", initialBalance: "" });
 
   const openNew = () => { setEditVehicle(null); setForm({ name: "", model: "", year: "", currentKm: "", avgKmL: "11", initialBalance: "" }); setModalVehicle(true); };
-  const openEdit = (v) => { setEditVehicle(v); setForm({ name: v.name, model: v.model || "", year: v.year || "", currentKm: v.currentKm || "", avgKmL: v.avgKmL || "11", initialBalance: v.initialBalance ?? "" }); setModalVehicle(true); };
+  const openEdit = (v) => { setEditVehicle(v); setForm({ name: v.name, model: v.model || "", year: v.year || "", currentKm: v.currentKm || "", avgKmL: String(v.avgKmL || MEDIA_PADRAO_KM_L).replace(".", ","), initialBalance: v.initialBalance ?? "" }); setModalVehicle(true); };
 
   const saveVehicle = () => {
     if (!form.name) return;
-    const parsed = { ...form, currentKm: +form.currentKm, avgKmL: +form.avgKmL, initialBalance: form.initialBalance !== "" ? +form.initialBalance : 0 };
+    const parsed = { ...form, currentKm: +form.currentKm, avgKmL: parseKmL(form.avgKmL) || MEDIA_PADRAO_KM_L, initialBalance: form.initialBalance !== "" ? +form.initialBalance : 0 };
     if (editVehicle) {
       setVehicles(prev => prev.map(v => v.id === editVehicle.id ? { ...v, ...parsed } : v));
     } else {
@@ -1269,7 +1288,7 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
               </div>
               <div className="form-group">
                 <label className="form-label">Média km/L</label>
-                <input className="form-input" inputMode="decimal" placeholder="11" value={form.avgKmL} onChange={e => setForm(p => ({ ...p, avgKmL: e.target.value }))}/>
+                <input className="form-input" inputMode="decimal" placeholder="11" value={form.avgKmL} onChange={e => setForm(p => ({ ...p, avgKmL: sanitizeKmL(e.target.value) }))}/>
               </div>
             </div>
             <div className="form-group">
@@ -1311,7 +1330,7 @@ export default function App() {
 
   const finishSetup = () => {
     if (!setupForm.name) return;
-    const v = { ...setupForm, id: uid(), currentKm: +setupForm.currentKm, avgKmL: +setupForm.avgKmL || 11 };
+    const v = { ...setupForm, id: uid(), currentKm: +setupForm.currentKm, avgKmL: parseKmL(setupForm.avgKmL) || MEDIA_PADRAO_KM_L };
     setVehicles([v]);
     setCurrentVehicleId(v.id);
     setSetupModal(false);
@@ -1412,7 +1431,7 @@ export default function App() {
                 </div>
                 <div className="form-group">
                   <label className="form-label">Média km/L</label>
-                  <input className="form-input" inputMode="decimal" placeholder="11" value={setupForm.avgKmL} onChange={e => setSetupForm(p => ({ ...p, avgKmL: e.target.value }))}/>
+                  <input className="form-input" inputMode="decimal" placeholder="11" value={setupForm.avgKmL} onChange={e => setSetupForm(p => ({ ...p, avgKmL: sanitizeKmL(e.target.value) }))}/>
                 </div>
               </div>
               <button className="btn btn-primary" onClick={finishSetup}>Começar</button>
