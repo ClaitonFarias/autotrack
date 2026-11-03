@@ -301,7 +301,8 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
     .sort((a, b) => b.date.localeCompare(a.date));
   const lastPricePerLiter = allFuelsUpToMonth.length ? +allFuelsUpToMonth[0].pricePerLiter : 0;
 
-  const vehicleAvgKmL = vehicle?.avgKmL || MEDIA_PADRAO_KM_L;
+  // Mês fechado usa a média padrão gravada no fechamento, para não mudar ao editar o veículo
+  const vehicleAvgKmL = monthBalances[`${currentVehicleId}_${month}`]?.avgKmL || vehicle?.avgKmL || MEDIA_PADRAO_KM_L;
   // Percurso com média própria usa ela; senão a do veículo
   const estimatedLiters = monthTrips.reduce((a, t) => a + (t.kmFinal - t.kmInitial) / (t.avgKmL || vehicleAvgKmL), 0);
   const avgKmL = estimatedLiters > 0 ? totalKm / estimatedLiters : vehicleAvgKmL;
@@ -334,7 +335,7 @@ const Dashboard = ({ vehicles, currentVehicleId, trips, fuels, alerts, expenses,
 
   const confirmClose = () => {
     const val = parseFloat(editBalance.replace(",", "."));
-    setMonthBalances(prev => ({ ...prev, [balKey]: { confirmed: true, balance: isNaN(val) ? calculatedBalance : val } }));
+    setMonthBalances(prev => ({ ...prev, [balKey]: { confirmed: true, balance: isNaN(val) ? calculatedBalance : val, avgKmL: vehicleAvgKmL } }));
     setCloseModal(false);
   };
 
@@ -1180,7 +1181,7 @@ const Expenses = ({ expenses, setExpenses, vehicles, currentVehicleId, maintenan
 };
 
 // ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
-const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, exportData, importData }) => {
+const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId, setMonthBalances, exportData, importData }) => {
   const [modalVehicle, setModalVehicle] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
   const [form, setForm] = useState({ name: "", model: "", year: "", currentKm: "", avgKmL: "11", initialBalance: "" });
@@ -1188,10 +1189,17 @@ const Settings = ({ vehicles, setVehicles, currentVehicleId, setCurrentVehicleId
   const openNew = () => { setEditVehicle(null); setForm({ name: "", model: "", year: "", currentKm: "", avgKmL: "11", initialBalance: "" }); setModalVehicle(true); };
   const openEdit = (v) => { setEditVehicle(v); setForm({ name: v.name, model: v.model || "", year: v.year || "", currentKm: v.currentKm || "", avgKmL: String(v.avgKmL || MEDIA_PADRAO_KM_L).replace(".", ","), initialBalance: v.initialBalance ?? "" }); setModalVehicle(true); };
 
+  // Meses fechados antes desta regra não têm média gravada: grava a anterior à edição
+  const congelarMediaMesesFechados = (vehicleId, mediaAtual) => {
+    setMonthBalances(prev => Object.fromEntries(Object.entries(prev).map(([chave, mes]) =>
+      chave.startsWith(`${vehicleId}_`) && mes.confirmed && !mes.avgKmL ? [chave, { ...mes, avgKmL: mediaAtual }] : [chave, mes])));
+  };
+
   const saveVehicle = () => {
     if (!form.name) return;
     const parsed = { ...form, currentKm: +form.currentKm, avgKmL: parseKmL(form.avgKmL) || MEDIA_PADRAO_KM_L, initialBalance: form.initialBalance !== "" ? +form.initialBalance : 0 };
     if (editVehicle) {
+      congelarMediaMesesFechados(editVehicle.id, editVehicle.avgKmL || MEDIA_PADRAO_KM_L);
       setVehicles(prev => prev.map(v => v.id === editVehicle.id ? { ...v, ...parsed } : v));
     } else {
       const newV = { ...parsed, id: uid() };
